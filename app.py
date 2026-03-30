@@ -2,7 +2,7 @@ import streamlit as st
 import requests
 import pandas as pd
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 
 API_KEY = st.text_input("🔑 YouTube API Key 입력", type="password")
 
@@ -52,6 +52,7 @@ st.title("📊 YouTube 분석기")
 
 query = st.text_input("검색 키워드")
 count = st.slider("영상 개수", 10, 50, 20)
+only_algo = st.checkbox("알고리즘 탄 영상만 보기")
 
 if st.button("🔍 분석 시작"):
     if not API_KEY:
@@ -82,8 +83,34 @@ if st.button("🔍 분석 시작"):
             subs = channel_map.get(channel_id, 0)
             duration = parse_duration(v["contentDetails"]["duration"])
 
+            # 업로드 날짜 계산
+            published_at = v["snippet"]["publishedAt"]
+            published_dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            days = max((now - published_dt).days, 1)
+
+            # 기본 지표
             ratio = views / subs if subs > 0 else 0
+            diff = views - subs
+            views_per_day = views / days
             vtype = classify(duration, title)
+
+            # 🔥 알고리즘 추정 + 이유
+            algo_flag = "NO"
+            reason = "일반 노출"
+
+            if ratio >= 5 and days <= 7:
+                algo_flag = "YES"
+                reason = "🔥 강한 추천 (초기 + 높은 조회수/구독자 비율)"
+            elif ratio >= 3:
+                algo_flag = "YES"
+                reason = "추천 가능성 높음 (조회수/구독자 높음)"
+            elif views_per_day >= 10000:
+                algo_flag = "YES"
+                reason = "빠른 조회수 증가"
+            elif vtype == "SHORTS" and ratio >= 2:
+                algo_flag = "YES"
+                reason = "Shorts 알고리즘 반응"
 
             rows.append({
                 "제목": title,
@@ -91,13 +118,23 @@ if st.button("🔍 분석 시작"):
                 "조회수": views,
                 "구독자": subs,
                 "조회수/구독자": round(ratio, 4),
-                "길이(초)": duration,
+                "조회수-구독자": diff,
+                "일평균조회수": int(views_per_day),
+                "업로드일수": days,
                 "유형": vtype,
+                "알고리즘탐지": algo_flag,
+                "이유": reason,
                 "링크": f"https://youtube.com/watch?v={vid}"
             })
 
         df = pd.DataFrame(rows)
-        df = df.sort_values("조회수/구독자", ascending=False)
+        if only_algo:
+            df = df[df["알고리즘탐지"] == "YES"]
+        df = df.sort_values(
+            by=["알고리즘탐지", "조회수/구독자"],
+            ascending=[False, False]
+        )
+        df = df.sort_values(sort_option, ascending=False)
 
         st.dataframe(df)
 
